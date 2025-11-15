@@ -1,36 +1,75 @@
 #include <type_traits>
 
 // ============================================================================
-// STREAM
+// STREAM — compile-time char list
 // ============================================================================
 template<char... Cs>
 struct stream {};
 
 
 // ============================================================================
-// TOKENS
+// TOKEN DEFINITIONS — Spongelang
 // ============================================================================
-struct tok_lpar {};      
-struct tok_rpar {};      
-struct tok_plus {};      
-struct tok_end {};       
+struct tok_lpar {};
+struct tok_rpar {};
+struct tok_lbrace {};
+struct tok_rbrace {};
+
+struct tok_plus {};
+struct tok_minus {};
+struct tok_mul {};
+struct tok_div {};
+
+struct tok_assign {};
+struct tok_comma {};
+struct tok_semicolon {};
+
+struct tok_if {};
+struct tok_else {};
+struct tok_fn {};
+struct tok_let {};
+
 template<int N> struct tok_number {};
+template<char... Cs> struct tok_ident {
+    using chars = tok_ident<Cs...>;
+};
+template<char... Cs> struct tok_string {
+    using chars = tok_string<Cs...>;
+};
+
+struct tok_end {};
 
 
 // ============================================================================
-// PARSE NUMBER
+// HELPER: char classification (identifier rules)
+// ============================================================================
+template<char C>
+struct is_alpha {
+    static constexpr bool value =
+        (C >= 'a' && C <= 'z') ||
+        (C >= 'A' && C <= 'Z') ||
+        (C == '_');
+};
+
+template<char C>
+struct is_alnum {
+    static constexpr bool value =
+        is_alpha<C>::value || (C >= '0' && C <= '9');
+};
+
+
+// ============================================================================
+// NUMBER PARSER
 // ============================================================================
 template<typename Stream, int Acc = 0>
 struct parse_number;
 
-// empty
 template<int Acc>
 struct parse_number<stream<>, Acc> {
     using type = tok_number<Acc>;
     using rest = stream<>;
 };
 
-// digit or not
 template<char C, char... Cs, int Acc>
 struct parse_number<stream<C, Cs...>, Acc> {
     static constexpr bool is_digit = (C >= '0' && C <= '9');
@@ -53,49 +92,200 @@ struct parse_number<stream<C, Cs...>, Acc> {
 
 
 // ============================================================================
-// TOKENIZER
+// IDENTIFIER PARSER
+// ============================================================================
+template<typename Stream, typename Accum>
+struct parse_ident;
+
+template<typename Accum>
+struct parse_ident<stream<>, Accum> {
+    using type = Accum;
+    using rest = stream<>;
+};
+
+template<char C, char... Cs, typename Accum>
+struct parse_ident<stream<C, Cs...>, Accum> {
+    static constexpr bool good = is_alnum<C>::value;
+
+    using type =
+        std::conditional_t<
+            good,
+            typename parse_ident<stream<Cs...>, tok_ident<Accum::chars..., C>>::type,
+            Accum
+        >;
+
+    using rest =
+        std::conditional_t<
+            good,
+            typename parse_ident<stream<Cs...>, tok_ident<Accum::chars..., C>>::rest,
+            stream<C, Cs...>
+        >;
+};
+
+
+// ============================================================================
+// STRING PARSER — "xxx"
+// ============================================================================
+template<typename Stream, typename Accum>
+struct parse_string;
+
+template<typename Accum>
+struct parse_string<stream<>, Accum> {
+    static_assert(!sizeof(Accum), "Unterminated string literal");
+};
+
+template<char C, char... Cs, typename Accum>
+struct parse_string<stream<C, Cs...>, Accum> {
+    using tail = stream<Cs...>;
+
+    using type =
+        std::conditional_t<
+            C == '"',
+            tok_string<Accum::chars...>,
+            typename parse_string<tail, tok_string<Accum::chars..., C>>::type
+        >;
+
+    using rest =
+        std::conditional_t<
+            C == '"',
+            tail,
+            typename parse_string<tail, tok_string<Accum::chars..., C>>::rest
+        >;
+};
+
+
+// ============================================================================
+// KEYWORD MAPPING
+// ============================================================================
+template<typename Ident>
+struct keyword_map {
+    using type = Ident;  // default → identifier
+};
+
+template<>
+struct keyword_map<tok_ident<'i','f'>> {
+    using type = tok_if;
+};
+
+template<>
+struct keyword_map<tok_ident<'e','l','s','e'>> {
+    using type = tok_else;
+};
+
+template<>
+struct keyword_map<tok_ident<'f','n'>> {
+    using type = tok_fn;
+};
+
+template<>
+struct keyword_map<tok_ident<'l','e','t'>> {
+    using type = tok_let;
+};
+
+
+// ============================================================================
+// MAIN TOKENIZER — next_token
 // ============================================================================
 template<typename Stream>
 struct next_token;
 
-// empty
+// END
 template<>
 struct next_token<stream<>> {
     using type = tok_end;
     using rest = stream<>;
 };
 
-// general token
+// Skip whitespace
+template<char... Cs>
+struct next_token<stream<' ', Cs...>> : next_token<stream<Cs...>> {};
+
+template<char... Cs>
+struct next_token<stream<'\n', Cs...>> : next_token<stream<Cs...>> {};
+
+template<char... Cs>
+struct next_token<stream<'\t', Cs...>> : next_token<stream<Cs...>> {};
+
+// Main
 template<char C, char... Cs>
 struct next_token<stream<C, Cs...>> {
-    static constexpr bool is_digit = (C >= '0' && C <= '9');
+
+    static constexpr bool is_digit_char = (C >= '0' && C <= '9');
+    static constexpr bool is_ident_start = is_alpha<C>::value;
+
+    using S = stream<Cs...>;
+
+    // number
     using number = parse_number<stream<C, Cs...>>;
 
-    using type = std::conditional_t<
-        is_digit,
-        typename number::type,
-        std::conditional_t<
-            C == '(', tok_lpar,
-            std::conditional_t<
-                C == ')', tok_rpar,
-                std::conditional_t<
-                    C == '+', tok_plus,
-                    tok_end
-                >
-            >
-        >
-    >;
+    // identifier
+    using ident = parse_ident<stream<C, Cs...>, tok_ident<>>;
 
-    using rest = std::conditional_t<
-        is_digit,
-        typename number::rest,
-        stream<Cs...>
-    >;
+    // string "..."
+    using string = parse_string<S, tok_string<>>;
+
+    using type =
+        std::conditional_t<is_digit_char,
+            typename number::type,
+
+        std::conditional_t<is_ident_start,
+            typename keyword_map<typename ident::type>::type,
+
+        std::conditional_t<C == '"',
+            typename string::type,
+
+        std::conditional_t<C == '(',
+            tok_lpar,
+
+        std::conditional_t<C == ')',
+            tok_rpar,
+
+        std::conditional_t<C == '{',
+            tok_lbrace,
+
+        std::conditional_t<C == '}',
+            tok_rbrace,
+
+        std::conditional_t<C == '+',
+            tok_plus,
+
+        std::conditional_t<C == '-',
+            tok_minus,
+
+        std::conditional_t<C == '*',
+            tok_mul,
+
+        std::conditional_t<C == '/',
+            tok_div,
+
+        std::conditional_t<C == '=',
+            tok_assign,
+
+        std::conditional_t<C == ',',
+            tok_comma,
+
+        std::conditional_t<C == ';',
+            tok_semicolon,
+
+            tok_end   // fallback
+        >>>>>>>>>>>>>>>;
+
+    using rest =
+        std::conditional_t<is_digit_char,
+            typename number::rest,
+
+        std::conditional_t<is_ident_start,
+            typename ident::rest,
+
+        std::conditional_t<C == '"',
+            typename string::rest,
+            S
+        >>>;
 };
 
 
 // ============================================================================
-// TOKEN STREAM
+// TOKEN STREAM WRAPPER
 // ============================================================================
 template<typename RawStream>
 struct token_stream {
@@ -106,100 +296,16 @@ struct token_stream {
 
 
 // ============================================================================
-// AST
+// TEST: Run tokenizer on small Spongelang snippet
 // ============================================================================
-template<int N> struct ast_num {};
-template<typename L, typename R> struct ast_add {};
+using sample =
+    stream<
+        'l','e','t',' ', 'x',' ','=',' ','3','+','5',';'
+    >;
 
+using T0 = token_stream<sample>;
+using tok0 = T0::head_token;   // tok_let
 
-// ============================================================================
-// FORWARD DECL
-// ============================================================================
-template<typename TokenStream>
-struct parse_expr;
-
-
-// ============================================================================
-// parse_expr_impl
-// ============================================================================
-template<typename Tok, typename Rest>
-struct parse_expr_impl;
-
-// NUMBER
-template<int N, typename Rest>
-struct parse_expr_impl<tok_number<N>, Rest> {
-    using node = ast_num<N>;
-    using rest = Rest;
-};
-
-// '(' Expr '+' Expr ')'
-template<typename Rest>
-struct parse_expr_impl<tok_lpar, Rest> {
-
-    template<typename TS>
-    struct parse_add {
-        using expr1 = parse_expr<TS>;
-        using R1 = typename expr1::rest;
-
-        static_assert(std::is_same_v<typename R1::head_token, tok_plus>, "Expected '+'");
-        using R2 = typename R1::rest_stream;
-
-        using expr2 = parse_expr<R2>;
-        using R3 = typename expr2::rest;
-
-        static_assert(std::is_same_v<typename R3::head_token, tok_rpar>, "Expected ')'");
-        using R4 = typename R3::rest_stream;
-
-        using node = ast_add<typename expr1::node, typename expr2::node>;
-        using rest = R4;
-    };
-
-    using impl = parse_add<Rest>;
-    using node = typename impl::node;
-    using rest = typename impl::rest;
-};
-
-
-// ============================================================================
-// parse_expr ENTRY
-// ============================================================================
-template<typename TokenStream>
-struct parse_expr {
-    using tok = typename TokenStream::head_token;
-    using rest = typename TokenStream::rest_stream;
-
-    using impl = parse_expr_impl<tok, rest>;
-    using node = typename impl::node;
-    using rest_final = typename impl::rest;
-};
-
-
-// ============================================================================
-// EVALUATOR
-// ============================================================================
-template<typename Node>
-struct eval;
-
-template<int N>
-struct eval<ast_num<N>> {
-    static constexpr int value = N;
-};
-
-template<typename L, typename R>
-struct eval<ast_add<L, R>> {
-    static constexpr int value = eval<L>::value + eval<R>::value;
-};
-
-
-// ============================================================================
-// TEST PROGRAM
-// ============================================================================
-using program = stream<'(', '3', '+', '5', ')'>;
-
-using tokens = token_stream<program>;
-using parsed = parse_expr<tokens>;
-using AST = typename parsed::node;
-
-static_assert(eval<AST>::value == 8, "Compile-time evaluation failed!");
+static_assert(std::is_same_v<tok0, tok_let>, "Tokenizer failed");
 
 int main() {}
