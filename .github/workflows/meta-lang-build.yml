@@ -31,15 +31,31 @@ jobs:
           fetch-depth: 0
 
       # ------------------------------------------------------------
-      # Compile (compile-time meta-language)
+      # DEBUG — 확실히 src/meta_lang.cpp를 알고 싶을 때
+      # ------------------------------------------------------------
+      - name: DEBUG — List src/
+        run: |
+          echo "=== LISTING src/ ==="
+          ls -al src || echo "src NOT FOUND"
+          echo "====================="
+
+      - name: DEBUG — Show first lines of meta_lang.cpp
+        run: |
+          echo "=== HEAD OF src/meta_lang.cpp ==="
+          head -n 50 src/meta_lang.cpp || echo "meta_lang.cpp NOT FOUND"
+          echo "================================="
+
+      # ------------------------------------------------------------
+      # Compile (compile-time template language)
       # ------------------------------------------------------------
       - name: Compile Meta-Lang
         run: |
           mkdir -p dist
-          g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang || echo "Compile-time language: runtime not required."
+          echo "Compiling src/meta_lang.cpp ..."
+          g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang || echo "Compile-time language error ignored (runtime not required)."
 
       # ------------------------------------------------------------
-      # ProofLedger Generation (src/*.cpp 자동 감지)
+      # ProofLedger Generation (SHA256 + auto-detect CPP)
       # ------------------------------------------------------------
       - name: Generate ProofLedger
         run: |
@@ -49,18 +65,17 @@ jobs:
           echo "Build Time: $(date)" >> proofledger-${{ matrix.os }}.txt
           echo "" >> proofledger-${{ matrix.os }}.txt
 
-          echo "== Detecting C++ source in src/ ==" >> proofledger-${{ matrix.os }}.txt
+          echo "== Detecting CPP file in src/ ==" >> proofledger-${{ matrix.os }}.txt
           CPP=$(ls src/*.cpp 2>/dev/null | head -n 1 || true)
           echo "Detected CPP: $CPP" >> proofledger-${{ matrix.os }}.txt
 
           if [ -f "$CPP" ]; then
             echo "" >> proofledger-${{ matrix.os }}.txt
             echo "== SHA256 of $CPP ==" >> proofledger-${{ matrix.os }}.txt
-            
             shasum -a 256 "$CPP" >> proofledger-${{ matrix.os }}.txt 2>/dev/null \
               || sha256sum "$CPP" >> proofledger-${{ matrix.os }}.txt
           else
-            echo "No CPP source found inside src/" >> proofledger-${{ matrix.os }}.txt
+            echo "No CPP source found in src/" >> proofledger-${{ matrix.os }}.txt
           fi
 
       # ------------------------------------------------------------
@@ -74,6 +89,9 @@ jobs:
             dist/**
             proofledger-${{ matrix.os }}.txt
 
+  # ------------------------------------------------------------
+  # Release Job
+  # ------------------------------------------------------------
   release:
     name: "Create Auto Release"
     runs-on: ubuntu-latest
