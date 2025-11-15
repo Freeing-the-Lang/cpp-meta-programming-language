@@ -2,44 +2,31 @@
 
 //
 // ============================================================================
-//   C++ TEMPLATE META-PROGRAMMING LANGUAGE (FULL VERSION, ONE FILE)
-//   - Tokenizer
-//   - Stream
-//   - Grammar
-//   - Parser
-//   - AST
-//   - Evaluator
-//   - Compile-Time Execution
+//   C++ TEMPLATE META-PROGRAMMING LANGUAGE — FIXED FULL VERSION
+//   (Token → Parser → AST → Eval 컴파일타임 언어)
 // ============================================================================
 //
 
 
 // ============================================================================
-// 1. STRING → STREAM
+// 1. STREAM — compile-time char list
 // ============================================================================
 template<char... Cs>
-struct stream {
-    static constexpr bool empty = false;
-};
-
-template<>
-struct stream<> {
-    static constexpr bool empty = true;
-};
+struct stream {};
 
 
 // ============================================================================
-// 2. TOKEN DEFINITIONS
+// 2. TOKENS
 // ============================================================================
 struct tok_lpar {};      // '('
 struct tok_rpar {};      // ')'
 struct tok_plus {};      // '+'
-struct tok_end {};       // end
+struct tok_end {};       // end-of-stream
 template<int N> struct tok_number {};
 
 
 // ============================================================================
-// 3. PARSE NUMBER (recursive template)
+// 3. PARSE NUMBER
 // ============================================================================
 template<typename Stream, int Acc = 0>
 struct parse_number;
@@ -56,29 +43,29 @@ template<char C, char... Cs, int Acc>
 struct parse_number<stream<C, Cs...>, Acc> {
     static constexpr bool is_digit = (C >= '0' && C <= '9');
 
-    using next = stream<Cs...>;
+    using next_stream = stream<Cs...>;
 
     using type = std::conditional_t<
         is_digit,
-        typename parse_number<next, Acc * 10 + (C - '0')>::type,
+        typename parse_number<next_stream, Acc * 10 + (C - '0')>::type,
         tok_number<Acc>
     >;
 
     using rest = std::conditional_t<
         is_digit,
-        typename parse_number<next, Acc * 10 + (C - '0')>::rest,
+        typename parse_number<next_stream, Acc * 10 + (C - '0')>::rest,
         stream<C, Cs...>
     >;
 };
 
 
 // ============================================================================
-// 4. TOKENIZER
+// 4. TOKENIZER — single token extraction
 // ============================================================================
 template<typename Stream>
 struct next_token;
 
-// empty
+// empty stream → end token
 template<>
 struct next_token<stream<>> {
     using type = tok_end;
@@ -88,8 +75,8 @@ struct next_token<stream<>> {
 // general case
 template<char C, char... Cs>
 struct next_token<stream<C, Cs...>> {
-    using number = parse_number<stream<C, Cs...>>;
     static constexpr bool is_digit = (C >= '0' && C <= '9');
+    using number = parse_number<stream<C, Cs...>>;
 
     using type = std::conditional_t<
         is_digit,
@@ -117,16 +104,16 @@ struct next_token<stream<C, Cs...>> {
 // ============================================================================
 // 5. TOKEN STREAM WRAPPER
 // ============================================================================
-template<typename Stream>
+template<typename RawStream>
 struct token_stream {
-    using tok = next_token<Stream>;
+    using tok = next_token<RawStream>;
     using head_token = typename tok::type;
     using rest_stream = typename tok::rest;
 };
 
 
 // ============================================================================
-// 6. AST DEFINITIONS
+// 6. AST NODES
 // ============================================================================
 template<int N>
 struct ast_num {};
@@ -136,14 +123,14 @@ struct ast_add {};
 
 
 // ============================================================================
-// 7. PARSER FORWARD DECL
+// 7. PARSER FORWARD DECL.
 // ============================================================================
 template<typename TokenStream>
 struct parse_expr;
 
 
 // ============================================================================
-// 8. parse_expr_impl (숫자 or '(' 시작)
+// 8. parse_expr_impl — number or '('
 // ============================================================================
 template<typename Tok, typename Rest>
 struct parse_expr_impl;
@@ -158,24 +145,26 @@ struct parse_expr_impl<tok_number<N>, Rest> {
 // '(' Expr '+' Expr ')'
 template<typename Rest>
 struct parse_expr_impl<tok_lpar, Rest> {
-    // Add parser
+
     template<typename TS>
     struct parse_add {
-        // Expr1
-        using expr1 = parse_expr<TS>;
-        using R1 = typename expr1::rest;
+        // 1. parse left expr
+        using left_expr = parse_expr<TS>;
+        using R1 = typename left_expr::rest;
 
+        // 2. expect '+'
         static_assert(std::is_same_v<typename R1::head_token, tok_plus>, "Expected '+'");
         using R2 = typename R1::rest_stream;
 
-        // Expr2
-        using expr2 = parse_expr<R2>;
-        using R3 = typename expr2::rest;
+        // 3. parse right expr
+        using right_expr = parse_expr<R2>;
+        using R3 = typename right_expr::rest;
 
+        // 4. expect ')'
         static_assert(std::is_same_v<typename R3::head_token, tok_rpar>, "Expected ')'");
         using R4 = typename R3::rest_stream;
 
-        using node = ast_add<typename expr1::node, typename expr2::node>;
+        using node = ast_add<typename left_expr::node, typename right_expr::node>;
         using rest = R4;
     };
 
@@ -186,7 +175,7 @@ struct parse_expr_impl<tok_lpar, Rest> {
 
 
 // ============================================================================
-// 9. parse_expr (최종 parser)
+// 9. parse_expr — entry
 // ============================================================================
 template<typename TokenStream>
 struct parse_expr {
@@ -195,7 +184,7 @@ struct parse_expr {
 
     using impl = parse_expr_impl<tok, rest>;
     using node = typename impl::node;
-    using rest_final = typename impl::rest;
+    using rest = typename impl::rest;
 };
 
 
@@ -219,15 +208,12 @@ struct eval<ast_add<L, R>> {
 
 
 // ============================================================================
-// 11. TEST PROGRAM (COMPILE-TIME EXECUTION)
+// 11. TEST PROGRAM — (3+5)
 // ============================================================================
-//
-// Example: (3+5)
-//
 using program_str = stream<'(', '3', '+', '5', ')'>;
 
 using tokens = token_stream<program_str>;
-using parsed = parse_expr< tokens >;
+using parsed = parse_expr<tokens>;
 using AST = typename parsed::node;
 
 static_assert(eval<AST>::value == 8, "Compile-time evaluation failed!");
