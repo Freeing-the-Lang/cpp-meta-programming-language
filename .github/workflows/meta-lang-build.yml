@@ -32,17 +32,12 @@ jobs:
         with:
           python-version: "3.x"
 
+      # ---------------------------
+      # DEBUG — (heredoc 제거, Windows 호환)
+      # ---------------------------
       - name: DEBUG — List src/
         run: |
-          python - << 'PY'
-          import os, glob
-          print("=== src/ ===")
-          if os.path.isdir("src"):
-              for p in sorted(glob.glob("src/**/*", recursive=True)):
-                  print(p)
-          else:
-              print("src NOT FOUND")
-          PY
+          python tools/debug_src.py
 
       - name: Compile Meta-Lang
         shell: bash
@@ -53,12 +48,8 @@ jobs:
             || clang++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang 2>/dev/null ) \
           || echo "Compile-time language: output not required."
 
-      # ---------------------------
-      # 외부 python 파일 실행
-      # ---------------------------
       - name: Generate ProofLedger
-        run: |
-          python tools/generate_ledger.py
+        run: python tools/generate_ledger.py
 
       - name: Upload Build & ProofLedger
         uses: actions/upload-artifact@v4
