@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------
-      # Setup Python (for SHA + tooling, 3OS 동일 동작)
+      # Setup Python
       # ---------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -39,12 +39,12 @@ jobs:
           python-version: '3.x'
 
       # ---------------------------
-      # DEBUG — src/ 검사 (3OS 공통, Python로 안전하게)
+      # Debug: src/ 리스트 & 파일 확인
       # ---------------------------
       - name: DEBUG — List src/ and show meta_lang.cpp head
         run: |
           python - << 'PY'
-          import os, glob, itertools
+          import os, glob
           print("=== LISTING src/ ===")
           if os.path.isdir("src"):
               for p in sorted(glob.glob("src/**/*", recursive=True)):
@@ -52,103 +52,110 @@ jobs:
           else:
               print("src NOT FOUND")
           print("=====================")
+
           print("=== HEAD OF src/meta_lang.cpp ===")
           try:
               with open("src/meta_lang.cpp", "r", encoding="utf-8", errors="ignore") as f:
-                  for i, line in zip(range(50), f):
+                  for i in range(50):
+                      line = f.readline()
+                      if not line:
+                          break
                       print(line.rstrip("\n"))
-          except FileNotFoundError:
+          except:
               print("meta_lang.cpp NOT FOUND")
           print("=================================")
           PY
 
       # ---------------------------
       # Compile (실패해도 계속)
-      # - Linux/macOS: g++/clang++ 어느쪽이든 보통 존재
-      # - Windows: 미존재 가능 → 실패해도 진행
       # ---------------------------
       - name: Compile Meta-Lang
         shell: bash
         run: |
-          set -e
           mkdir -p dist
           echo "[Build] Compiling src/meta_lang.cpp ..."
           ( g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang 2>/dev/null \
             || clang++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang 2>/dev/null ) \
-          || { echo "Compile-time language: runtime executable not required. Skipping compiler output."; }
+          || echo "Compile-time language: runtime output not required."
 
       # ---------------------------
-      # ProofLedger (모든 *.cpp/*.hpp/*.h + 산출물 SHA256)
+      # ProofLedger 생성 (Windows 호환)
       # ---------------------------
       - name: Generate ProofLedger
         run: |
-          python - << 'PY'
-          import os, glob, hashlib, datetime
-          repo   = os.environ.get("GITHUB_REPOSITORY","")
-          commit = os.environ.get("GITHUB_SHA","")
-          ref    = os.environ.get("GITHUB_REF","")
-          actor  = os.environ.get("GITHUB_ACTOR","")
-          run_id = os.environ.get("GITHUB_RUN_ID","")
-          run_no = os.environ.get("GITHUB_RUN_NUMBER","")
-          osname = os.environ.get("ImageOS","") or os.environ.get("RUNNER_OS","")
-          ts     = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+          echo "import os, glob, hashlib, datetime
 
-          ledger_name = f"proofledger-{osname}.txt" if osname else "proofledger.txt"
+repo   = os.environ.get('GITHUB_REPOSITORY','')
+commit = os.environ.get('GITHUB_SHA','')
+ref    = os.environ.get('GITHUB_REF','')
+actor  = os.environ.get('GITHUB_ACTOR','')
+run_id = os.environ.get('GITHUB_RUN_ID','')
+run_no = os.environ.get('GITHUB_RUN_NUMBER','')
+osname = os.environ.get('ImageOS','') or os.environ.get('RUNNER_OS','')
+ts     = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-          def sha256_of(path):
-              h = hashlib.sha256()
-              with open(path, "rb") as f:
-                  for chunk in iter(lambda: f.read(65536), b""):
-                      h.update(chunk)
-              return h.hexdigest()
+ledger_name = f'proofledger-{osname}.txt' if osname else 'proofledger.txt'
 
-          lines = []
-          lines.append(f"Repository: {repo}")
-          lines.append(f"Commit: {commit}")
-          lines.append(f"Ref: {ref}")
-          lines.append(f"Actor: {actor}")
-          lines.append(f"Run: {run_id} (#{run_no})")
-          lines.append(f"OS: {osname}")
-          lines.append(f"Build Time (UTC): {ts}")
-          lines.append("")
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path,'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
-          # 소스 SHA
-          patterns = ["src/**/*.cpp", "src/**/*.hpp", "src/**/*.h", "src/*.cpp", "src/*.hpp", "src/*.h"]
-          paths = sorted({p for pat in patterns for p in glob.glob(pat, recursive=True) if os.path.isfile(p)})
-          if paths:
-              lines.append("== SHA256 of source files ==")
-              for p in paths:
-                  try:
-                      lines.append(f"{sha256_of(p)}  {p}")
-                  except Exception as e:
-                      lines.append(f"[ERROR] {p}: {e}")
-              lines.append("")
-          else:
-              lines.append("No C++ sources found in src/")
-              lines.append("")
+lines=[]
+lines.append(f'Repository: {repo}')
+lines.append(f'Commit: {commit}')
+lines.append(f'Ref: {ref}')
+lines.append(f'Actor: {actor}')
+lines.append(f'Run: {run_id} (#{run_no})')
+lines.append(f'OS: {osname}')
+lines.append(f'Build Time (UTC): {ts}')
+lines.append('')
 
-          # 산출물 SHA
-          bins = []
-          if os.path.isdir("dist"):
-              for p in glob.glob("dist/**", recursive=True):
-                  if os.path.isfile(p):
-                      bins.append(p)
-          if bins:
-              lines.append("== SHA256 of build outputs ==")
-              for p in sorted(bins):
-                  try:
-                      lines.append(f"{sha256_of(p)}  {p}")
-                  except Exception as e:
-                      lines.append(f"[ERROR] {p}: {e}")
-              lines.append("")
+paths = sorted(set(
+    p for pat in ['src/**/*.cpp','src/**/*.hpp','src/**/*.h','src/*.cpp','src/*.hpp','src/*.h']
+    for p in glob.glob(pat, recursive=True)
+    if os.path.isfile(p)
+))
 
-          with open(ledger_name, "w", encoding="utf-8") as f:
-              f.write("\n".join(lines))
-          print(f"[OK] Wrote {ledger_name}")
-          PY
+if paths:
+    lines.append('== SHA256 of source files ==')
+    for p in paths:
+        try:
+            lines.append(f'{sha256_of(p)}  {p}')
+        except Exception as e:
+            lines.append(f'[ERROR] {p}: {e}')
+    lines.append('')
+else:
+    lines.append('No C++ sources found in src/')
+    lines.append('')
+
+bins=[]
+if os.path.isdir('dist'):
+    for p in glob.glob('dist/**', recursive=True):
+        if os.path.isfile(p):
+            bins.append(p)
+
+if bins:
+    lines.append('== SHA256 of build outputs ==')
+    for p in bins:
+        try:
+            lines.append(f'{sha256_of(p)}  {p}')
+        except Exception as e:
+            lines.append(f'[ERROR] {p}: {e}')
+    lines.append('')
+
+with open(ledger_name,'w',encoding='utf-8') as f:
+    f.write('\\n'.join(lines))
+
+print('[OK] Wrote', ledger_name)
+" > generate_ledger.py
+
+          python generate_ledger.py
 
       # ---------------------------
-      # Upload OS-specific artifact
+      # Upload artifacts
       # ---------------------------
       - name: Upload Build & ProofLedger
         uses: actions/upload-artifact@v4
@@ -161,7 +168,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------
-  # RELEASE JOB
+  # Release
   # ---------------------------
   release:
     name: "Create Auto Release"
