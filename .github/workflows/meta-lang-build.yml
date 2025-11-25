@@ -23,6 +23,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
@@ -34,25 +35,28 @@ jobs:
         with:
           python-version: "3.x"
 
-      # ---------------------------
-      # Windows: g++ 없으므로 MinGW 설치
-      # ---------------------------
-      - name: Setup MinGW (Windows only)
-        if: runner.os == 'Windows'
-        uses: egor-tensin/setup-mingw@v2
-        with:
-          platform: x64
 
-      # ---------------------------
+      # =============================================
+      #  WINDOWS: 안정적인 g++ 설치 (choco 기반)
+      # =============================================
+      - name: Install MinGW (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install mingw --yes
+          echo "C:\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+
+      # =============================================
       # DEBUG
-      # ---------------------------
+      # =============================================
       - name: DEBUG — List src/
         run: python tools/debug_src.py
 
 
-      # ---------------------------
-      # 빌드 (3OS 실행파일 확정 생성)
-      # ---------------------------
+      # =============================================
+      #  BUILD (3OS 실행파일 확정 생성)
+      # =============================================
       - name: Compile Meta-Lang
         shell: bash
         run: |
@@ -61,28 +65,31 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             echo "[Build] Windows → dist/meta_lang.exe"
             x86_64-w64-mingw32-g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang.exe \
-              || echo "Build failed on Windows"
+              || echo "Windows build failed"
+
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
             echo "[Build] macOS → dist/meta_lang"
             clang++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang \
-              || echo "Build failed on macOS"
+              || echo "macOS build failed"
+
           else
             echo "[Build] Ubuntu → dist/meta_lang"
             g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang \
-              || echo "Build failed on Ubuntu"
+              || echo "Ubuntu build failed"
+
           fi
 
 
-      # ---------------------------
-      # ProofLedger 생성 (외부 python)
-      # ---------------------------
+      # =============================================
+      #  ProofLedger 생성 (외부 파이썬)
+      # =============================================
       - name: Generate ProofLedger
         run: python tools/generate_ledger.py
 
 
-      # ---------------------------
-      # 아티팩트 업로드
-      # ---------------------------
+      # =============================================
+      #  아티팩트 업로드
+      # =============================================
       - name: Upload Build & ProofLedger
         uses: actions/upload-artifact@v4
         with:
@@ -91,6 +98,7 @@ jobs:
             dist/**
             proofledger-*.txt
           retention-days: 7
+
 
 
 
@@ -111,9 +119,10 @@ jobs:
         with:
           path: artifacts
 
-      # ---------------------------
-      # OS별 폴더로 재정리
-      # ---------------------------
+
+      # =============================================
+      # OS별 폴더 재정리
+      # =============================================
       - name: Rearrange for Release
         run: |
           mkdir -p release/windows
@@ -124,17 +133,19 @@ jobs:
           cp artifacts/meta-lang-macos-latest/* release/macos/ || true
           cp artifacts/meta-lang-ubuntu-latest/* release/ubuntu/ || true
 
-      # ---------------------------
+
+      # =============================================
       # ZIP 생성
-      # ---------------------------
+      # =============================================
       - name: Zip Artifacts
         run: |
           cd release
           zip -r ../meta-lang-artifacts.zip .
 
-      # ---------------------------
-      # RELEASE 생성
-      # ---------------------------
+
+      # =============================================
+      # GitHub Release 생성
+      # =============================================
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
