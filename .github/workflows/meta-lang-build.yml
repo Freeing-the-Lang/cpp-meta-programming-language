@@ -12,10 +12,12 @@ concurrency:
   group: cpptemplatelang-${{ github.ref }}
   cancel-in-progress: true
 
+
 jobs:
   build-3os:
     name: "Build — ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -33,24 +35,38 @@ jobs:
           python-version: "3.x"
 
       # ---------------------------
-      # DEBUG — (heredoc 제거, Windows 호환)
+      # DEBUG (Windows 호환)
       # ---------------------------
       - name: DEBUG — List src/
-        run: |
-          python tools/debug_src.py
+        run: python tools/debug_src.py
 
+      # ---------------------------
+      # Compile (3OS 실행파일 생성)
+      # ---------------------------
       - name: Compile Meta-Lang
         shell: bash
         run: |
           mkdir -p dist
-          echo "[Build] Compiling..."
-          ( g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang 2>/dev/null \
-            || clang++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang 2>/dev/null ) \
-          || echo "Compile-time language: output not required."
 
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "[Build] Windows → dist/meta_lang.exe"
+            g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang.exe || echo "Compile failed"
+          else
+            echo "[Build] Unix-like → dist/meta_lang"
+            g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang || echo "Compile failed"
+          fi
+
+          echo "Build finished"
+
+      # ---------------------------
+      # Generate ProofLedger (external python)
+      # ---------------------------
       - name: Generate ProofLedger
         run: python tools/generate_ledger.py
 
+      # ---------------------------
+      # Upload artifact
+      # ---------------------------
       - name: Upload Build & ProofLedger
         uses: actions/upload-artifact@v4
         with:
@@ -58,7 +74,13 @@ jobs:
           path: |
             dist/**
             proofledger-*.txt
+          if-no-files-found: warn
+          retention-days: 7
 
+
+  # ========================================================================
+  # RELEASE JOB
+  # ========================================================================
   release:
     name: "Create Auto Release"
     runs-on: ubuntu-latest
@@ -68,14 +90,29 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Download All Artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Zip Artifacts
-        run: zip -r meta-lang-artifacts.zip artifacts
+      # OS별 폴더로 정리
+      - name: Rearrange for Release
+        run: |
+          mkdir -p release/windows
+          mkdir -p release/macos
+          mkdir -p release/ubuntu
 
+          cp artifacts/meta-lang-windows-latest/* release/windows/
+          cp artifacts/meta-lang-macos-latest/* release/macos/
+          cp artifacts/meta-lang-ubuntu-latest/* release/ubuntu/
+
+      # ZIP 생성
+      - name: Zip Artifacts
+        run: |
+          cd release
+          zip -r ../meta-lang-artifacts.zip .
+
+      # RELEASE
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
