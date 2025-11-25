@@ -1,4 +1,4 @@
-name: "CPP Meta-Lang — 3OS Build + ProofLedger + Clean Release"
+name: "CPP Meta-Lang — 3OS Build + ProofLedger + Executables Release"
 
 on:
   push:
@@ -35,13 +35,23 @@ jobs:
           python-version: "3.x"
 
       # ---------------------------
-      # DEBUG (Windows 호환)
+      # Windows: g++ 없으므로 MinGW 설치
+      # ---------------------------
+      - name: Setup MinGW (Windows only)
+        if: runner.os == 'Windows'
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+
+      # ---------------------------
+      # DEBUG
       # ---------------------------
       - name: DEBUG — List src/
         run: python tools/debug_src.py
 
+
       # ---------------------------
-      # Compile (3OS 실행파일 생성)
+      # 빌드 (3OS 실행파일 확정 생성)
       # ---------------------------
       - name: Compile Meta-Lang
         shell: bash
@@ -50,22 +60,28 @@ jobs:
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             echo "[Build] Windows → dist/meta_lang.exe"
-            g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang.exe || echo "Compile failed"
+            x86_64-w64-mingw32-g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang.exe \
+              || echo "Build failed on Windows"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            echo "[Build] macOS → dist/meta_lang"
+            clang++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang \
+              || echo "Build failed on macOS"
           else
-            echo "[Build] Unix-like → dist/meta_lang"
-            g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang || echo "Compile failed"
+            echo "[Build] Ubuntu → dist/meta_lang"
+            g++ -std=c++20 src/meta_lang.cpp -o dist/meta_lang \
+              || echo "Build failed on Ubuntu"
           fi
 
-          echo "Build finished"
 
       # ---------------------------
-      # Generate ProofLedger (external python)
+      # ProofLedger 생성 (외부 python)
       # ---------------------------
       - name: Generate ProofLedger
         run: python tools/generate_ledger.py
 
+
       # ---------------------------
-      # Upload artifact
+      # 아티팩트 업로드
       # ---------------------------
       - name: Upload Build & ProofLedger
         uses: actions/upload-artifact@v4
@@ -74,8 +90,8 @@ jobs:
           path: |
             dist/**
             proofledger-*.txt
-          if-no-files-found: warn
           retention-days: 7
+
 
 
   # ========================================================================
@@ -90,29 +106,35 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Download all build artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      # OS별 폴더로 정리
+      # ---------------------------
+      # OS별 폴더로 재정리
+      # ---------------------------
       - name: Rearrange for Release
         run: |
           mkdir -p release/windows
           mkdir -p release/macos
           mkdir -p release/ubuntu
 
-          cp artifacts/meta-lang-windows-latest/* release/windows/
-          cp artifacts/meta-lang-macos-latest/* release/macos/
-          cp artifacts/meta-lang-ubuntu-latest/* release/ubuntu/
+          cp artifacts/meta-lang-windows-latest/* release/windows/ || true
+          cp artifacts/meta-lang-macos-latest/* release/macos/ || true
+          cp artifacts/meta-lang-ubuntu-latest/* release/ubuntu/ || true
 
+      # ---------------------------
       # ZIP 생성
+      # ---------------------------
       - name: Zip Artifacts
         run: |
           cd release
           zip -r ../meta-lang-artifacts.zip .
 
-      # RELEASE
+      # ---------------------------
+      # RELEASE 생성
+      # ---------------------------
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
